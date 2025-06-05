@@ -2,41 +2,39 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 
-	"go-flutter-parcial2_api/models"
-
-	"github.com/jinzhu/gorm"
-	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/joho/godotenv"
 )
 
-var DB *gorm.DB
-
-func LoadEnvVariables() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No se pudo cargar el archivo .env, usando variables de entorno del sistema")
-	}
+type Config struct {
+	DBHost     string
+	DBPort     string
+	DBUser     string
+	DBPassword string
+	DBName     string
+	AppPort    string
 }
 
-func ConnectDatabase() {
-	dbHost := os.Getenv("DB_HOST")
-	dbPort := os.Getenv("DB_PORT")
-	dbUser := os.Getenv("DB_USER")
-	dbPassword := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
-
-	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s sslmode=disable", dbHost, dbPort, dbUser, dbName, dbPassword)
-	db, err := gorm.Open("postgres", dsn)
+func LoadConfig() (*Config, error) {
+	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("No se pudo conectar a la base de datos: ", err)
+		return nil, fmt.Errorf("error loading .env file: %w", err)
 	}
 
-	db.LogMode(true)
-	DB = db
+	config := &Config{
+		DBHost:     os.Getenv("DB_HOST"),
+		DBPort:     os.Getenv("DB_PORT"),
+		DBUser:     os.Getenv("DB_USER"),
+		DBPassword: os.Getenv("DB_PASSWORD"),
+		DBName:     os.Getenv("DB_NAME"),
+		AppPort:    os.Getenv("APP_PORT"),
+	}
 
-	// Migrar modelos
-	db.AutoMigrate(&models.User{})
+	return config, nil
+}
+
+func (c *Config) GetDBURL() string {
+	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort)
 }

@@ -1,39 +1,61 @@
-# go-flutter-parcial2_api
+# Gin Clean Architecture Example
 
-API en Go usando Gin, GORM y autenticación JWT, conectada a Postgres y dockerizada.
+This is a clean architecture implementation using Gin framework with PostgreSQL and GORM.
 
-## Arquitectura
-- **controllers/**: Lógica de negocio y controladores HTTP
-- **models/**: Modelos de datos (GORM)
-- **routes/**: Definición de rutas y agrupación
-- **config/**: Configuración de base de datos y variables de entorno
-- **middlewares/**: Middlewares personalizados (ej: autenticación JWT)
-- **utils/**: Utilidades auxiliares
+## Project Structure
 
-## Endpoints principales
-- `POST /auth/register` — Registro de usuario
-- `POST /auth/login` — Login y obtención de JWT
-- `GET /protected/profile` — Ruta protegida (requiere JWT)
-
-## Variables de entorno
-Configura las variables en un archivo `.env` o usa las del sistema:
 ```
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=goauth
-JWT_SECRET=supersecretkey
+.
+├── cmd/app/main.go           # Application entry point
+├── config/config.go          # Configuration management
+├── internal/
+│   ├── app/app.go           # Application setup
+│   ├── controller/http/v1/   # HTTP handlers and routing
+│   ├── entity/              # Domain entities
+│   └── usecase/             # Business logic
+│       ├── repositories/    # Data access interfaces
+│       └── services/        # Business logic implementation
+├── docker-compose.yml        # Docker compose configuration
+└── Dockerfile               # Docker build configuration
 ```
 
-## Levantar con Docker Compose
+## Requirements
 
-1. Construye y levanta los servicios:
-   ```sh
-   docker-compose up --build
+- Go 1.22 or higher
+- Docker and Docker Compose
+- PostgreSQL
+
+## Getting Started
+
+1. Clone the repository
+2. Copy `.env.example` to `.env` and adjust the values if needed
+3. Start the PostgreSQL database:
+   ```bash
+   docker-compose up -d
    ```
-2. La API estará disponible en `http://localhost:8080` y la base de datos en el puerto `5432`.
+4. Run the application:
+   ```bash
+   go run cmd/app/main.go
+   ```
 
-## Notas
-- El proyecto realiza migración automática del modelo `User` al iniciar.
-- Puedes agregar más modelos y rutas siguiendo la estructura modular. 
+## API Endpoints
+
+### Users
+
+- `POST /api/v1/users` - Create a new user
+- `GET /api/v1/users/:id` - Get a user by ID
+- `GET /api/v1/users` - Get all users
+- `PUT /api/v1/users/:id` - Update a user
+- `DELETE /api/v1/users/:id` - Delete a user
+
+## Docker Build
+
+To build and run the application using Docker:
+
+```bash
+# Build the image
+docker build -t github.com/Y2ktorrez/go-flutter-parcial2_api .
+
+# Run the container
+docker run -p 8080:8080 --env-file .env github.com/Y2ktorrez/go-flutter-parcial2_api
+```
