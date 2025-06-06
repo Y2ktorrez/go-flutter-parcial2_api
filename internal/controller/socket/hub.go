@@ -24,6 +24,7 @@ type Room struct {
 	Unregister chan *Client     `json:"-"`         // Canal para desregistrar cliente
 	MaxUsers   int              `json:"max_users"` // Máximo 4 usuarios
 	mutex      sync.RWMutex     `json:"-"`
+	done       chan struct{}    `json:"-"` // Canal para terminar la goroutine
 }
 
 // Hub mantiene el conjunto de clientes activos y les envía mensajes
@@ -55,16 +56,17 @@ func (h *Hub) CreateRoom(projectID string) *Room {
 	room := &Room{
 		ID:         projectID,
 		Clients:    make(map[*Client]bool),
-		Broadcast:  make(chan []byte),
+		Broadcast:  make(chan []byte, 256), // Buffer para evitar bloqueos
 		Register:   make(chan *Client),
 		Unregister: make(chan *Client),
 		MaxUsers:   4,
+		done:       make(chan struct{}),
 	}
 
 	h.rooms[projectID] = room
 
 	// Iniciar el goroutine para manejar la sala
-	go room.run()
+	go room.run(h)
 
 	return room
 }
@@ -81,9 +83,17 @@ func (h *Hub) RemoveRoom(projectID string) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
 
-	if room, exists := h.rooms[projectID]; exists && len(room.Clients) == 0 {
-		delete(h.rooms, projectID)
-		log.Printf("Sala %s eliminada", projectID)
+	if room, exists := h.rooms[projectID]; exists {
+		room.mutex.RLock()
+		clientsCount := len(room.Clients)
+		room.mutex.RUnlock()
+
+		if clientsCount == 0 {
+			// Señalar que la sala debe cerrarse
+			close(room.done)
+			delete(h.rooms, projectID)
+			log.Printf("Sala %s eliminada", projectID)
+		}
 	}
 }
 
@@ -102,18 +112,22 @@ func (h *Hub) Run() {
 			room := h.GetRoom(client.ProjectID)
 			if room != nil {
 				room.Unregister <- client
-				// Si la sala está vacía, la eliminamos
-				if len(room.Clients) == 0 {
-					h.RemoveRoom(client.ProjectID)
-				}
 			}
 		}
 	}
 }
 
 // run maneja los eventos de una sala específica
-func (r *Room) run() {
+func (r *Room) run(hub *Hub) {
 	defer func() {
+		// Limpiar canales al finalizar
+		r.mutex.Lock()
+		for client := range r.Clients {
+			close(client.send)
+		}
+		r.mutex.Unlock()
+
+		// Cerrar canales de la sala
 		close(r.Broadcast)
 		close(r.Register)
 		close(r.Unregister)
@@ -142,6 +156,7 @@ func (r *Room) run() {
 			}
 
 			r.Clients[client] = true
+			usersCount := len(r.Clients)
 			r.mutex.Unlock()
 
 			// Notificar que un usuario se unió
@@ -152,58 +167,110 @@ func (r *Room) run() {
 				Username:  client.Username,
 				Data: map[string]interface{}{
 					"message":     client.Username + " se unió a la sala",
-					"users_count": len(r.Clients),
+					"users_count": usersCount,
 					"users":       r.GetConnectedUsers(),
 				},
 			}
 
-			if jsonMessage, err := json.Marshal(message); err == nil {
-				r.Broadcast <- jsonMessage
-			}
-
+			r.broadcastMessage(message)
 			log.Printf("Cliente %s conectado a la sala %s. Usuarios conectados: %d",
-				client.UserID, r.ID, len(r.Clients))
+				client.UserID, r.ID, usersCount)
 
 		case client := <-r.Unregister:
 			r.mutex.Lock()
 			if _, ok := r.Clients[client]; ok {
 				delete(r.Clients, client)
 				close(client.send)
+				usersCount := len(r.Clients)
+				r.mutex.Unlock()
 
 				// Notificar que un usuario se desconectó
-				message := Message{
-					Type:      "user_left",
-					ProjectID: r.ID,
-					UserID:    client.UserID,
-					Username:  client.Username,
-					Data: map[string]interface{}{
-						"message":     client.Username + " dejó la sala",
-						"users_count": len(r.Clients),
-						"users":       r.GetConnectedUsers(),
-					},
-				}
-
-				if jsonMessage, err := json.Marshal(message); err == nil && len(r.Clients) > 0 {
-					r.Broadcast <- jsonMessage
+				if usersCount > 0 { // Solo notificar si quedan usuarios
+					message := Message{
+						Type:      "user_left",
+						ProjectID: r.ID,
+						UserID:    client.UserID,
+						Username:  client.Username,
+						Data: map[string]interface{}{
+							"message":     client.Username + " dejó la sala",
+							"users_count": usersCount,
+							"users":       r.GetConnectedUsers(),
+						},
+					}
+					r.broadcastMessage(message)
 				}
 
 				log.Printf("Cliente %s desconectado de la sala %s. Usuarios conectados: %d",
-					client.UserID, r.ID, len(r.Clients))
+					client.UserID, r.ID, usersCount)
+
+				// Si no quedan usuarios, programar eliminación de la sala
+				if usersCount == 0 {
+					go func() {
+						// Esperar un poco antes de eliminar la sala por si alguien se reconecta
+						// time.Sleep(30 * time.Second)
+						hub.RemoveRoom(r.ID)
+					}()
+				}
+			} else {
+				r.mutex.Unlock()
 			}
-			r.mutex.Unlock()
 
 		case message := <-r.Broadcast:
 			r.mutex.RLock()
+			clientsToSend := make([]*Client, 0, len(r.Clients))
 			for client := range r.Clients {
-				select {
-				case client.send <- message:
-				default:
-					close(client.send)
-					delete(r.Clients, client)
-				}
+				clientsToSend = append(clientsToSend, client)
 			}
 			r.mutex.RUnlock()
+
+			log.Printf("Broadcasting to %d clients in room %s", len(clientsToSend), r.ID)
+
+			// Enviar mensaje a todos los clientes
+			var disconnectedClients []*Client
+			for _, client := range clientsToSend {
+				select {
+				case client.send <- message:
+					log.Printf("Message sent to client %s", client.UserID)
+				default:
+					// Cliente no puede recibir mensajes, marcar para desconectar
+					log.Printf("Client %s channel full, marking for disconnect", client.UserID)
+					disconnectedClients = append(disconnectedClients, client)
+				}
+			}
+
+			// Limpiar clientes desconectados
+			if len(disconnectedClients) > 0 {
+				r.mutex.Lock()
+				for _, client := range disconnectedClients {
+					if _, ok := r.Clients[client]; ok {
+						close(client.send)
+						delete(r.Clients, client)
+						log.Printf("Removed disconnected client %s", client.UserID)
+					}
+				}
+				r.mutex.Unlock()
+			}
+
+		case <-r.done:
+			// Sala marcada para eliminación
+			return
 		}
+	}
+}
+
+// broadcastMessage envía un mensaje a todos los clientes de la sala
+func (r *Room) broadcastMessage(message Message) {
+	jsonMessage, err := json.Marshal(message)
+	if err != nil {
+		log.Printf("Error marshaling message: %v", err)
+		return
+	}
+
+	// Usar select con default para evitar bloqueos
+	select {
+	case r.Broadcast <- jsonMessage:
+	default:
+		log.Printf("Broadcast channel full, dropping message")
 	}
 }
 
@@ -226,13 +293,18 @@ func (r *Room) GetConnectedUsers() []map[string]string {
 func (r *Room) BroadcastToRoom(message Message) error {
 	jsonMessage, err := json.Marshal(message)
 	if err != nil {
+		log.Printf("Error marshaling message: %v", err)
 		return err
 	}
 
+	log.Printf("Sending message to broadcast channel for room %s, type: %s", r.ID, message.Type)
+
 	select {
 	case r.Broadcast <- jsonMessage:
+		log.Printf("Message successfully queued for broadcast in room %s", r.ID)
 		return nil
 	default:
-		return nil // Si el canal está bloqueado, no hacemos nada
+		log.Printf("Broadcast channel full for room %s, message dropped", r.ID)
+		return nil
 	}
 }
