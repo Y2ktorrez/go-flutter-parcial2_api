@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/Y2ktorrez/go-flutter-parcial2_api/config"
 	v1 "github.com/Y2ktorrez/go-flutter-parcial2_api/internal/controller/http/v1"
@@ -11,6 +13,7 @@ import (
 	"github.com/Y2ktorrez/go-flutter-parcial2_api/internal/usecase/services"
 	impl "github.com/Y2ktorrez/go-flutter-parcial2_api/internal/usecase/services/Impl"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -27,8 +30,19 @@ func New(config *config.Config) (*App, error) {
 		return nil, fmt.Errorf("failed to setup database: %w", err)
 	}
 
+	r := gin.Default()
+
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
+
 	app := &App{
-		router: gin.Default(),
+		router: r,
 		db:     db,
 	}
 
@@ -60,24 +74,11 @@ func (a *App) setupRoutes() {
 	projectRepo := repositories.NewProjectRepository(a.db)
 
 	// Initialize services
-	userService := services.NewUserService(userRepo)
+	userService := services.NewUserService(userRepo, os.Getenv("JWT_SECRET"))
 	projectService := impl.NewProjectService(projectRepo)
 
 	// Setup routes
 	v1.SetupRoutes(a.router, userService, projectService)
 
-	a.router.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-ID")
-		
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-		
-		c.Next()
-	})
-	
 	socket.SetupRoutes(a.router)
 }

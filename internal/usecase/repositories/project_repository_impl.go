@@ -20,7 +20,7 @@ func (r *ProjectRepositoryImpl) Create(project *entity.Project) error {
 
 func (r *ProjectRepositoryImpl) FindByID(id string) (*entity.Project, error) {
 	var project entity.Project
-	err := r.db.First(&project, id).Error
+	err := r.db.First(&project, "id = ?", id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -38,5 +38,5 @@ func (r *ProjectRepositoryImpl) Update(project *entity.Project) error {
 }
 
 func (r *ProjectRepositoryImpl) Delete(id string) error {
-	return r.db.Delete(&entity.Project{}, id).Error
+	return r.db.Delete(&entity.Project{}, "id = ?", id).Error
 }

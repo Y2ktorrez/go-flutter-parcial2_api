@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"errors"
+
 	"github.com/Y2ktorrez/go-flutter-parcial2_api/internal/entity"
 
 	"gorm.io/gorm"
@@ -20,8 +22,20 @@ func (r *UserRepositoryImpl) Create(user *entity.User) error {
 
 func (r *UserRepositoryImpl) FindByID(id string) (*entity.User, error) {
 	var user entity.User
-	err := r.db.First(&user, id).Error
+	err := r.db.First(&user, "id = ?", id).Error
 	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func (r *UserRepositoryImpl) FindByEmail(email string) (*entity.User, error) {
+	var user entity.User
+	err := r.db.Where("email = ?", email).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("usuario no encontrado")
+		}
 		return nil, err
 	}
 	return &user, nil
@@ -38,5 +52,11 @@ func (r *UserRepositoryImpl) Update(user *entity.User) error {
 }
 
 func (r *UserRepositoryImpl) Delete(id string) error {
-	return r.db.Delete(&entity.User{}, id).Error
+	return r.db.Delete(&entity.User{}, "id = ?", id).Error
+}
+
+func (r *UserRepositoryImpl) EmailExists(email string) (bool, error) {
+	var count int64
+	err := r.db.Model(&entity.User{}).Where("email = ?", email).Count(&count).Error
+	return count > 0, err
 }

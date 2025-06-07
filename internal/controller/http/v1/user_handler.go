@@ -3,6 +3,7 @@ package v1
 import (
 	"net/http"
 
+	"github.com/Y2ktorrez/go-flutter-parcial2_api/internal/dto"
 	"github.com/Y2ktorrez/go-flutter-parcial2_api/internal/entity"
 	"github.com/Y2ktorrez/go-flutter-parcial2_api/internal/usecase/services"
 	"github.com/google/uuid"
@@ -102,4 +103,48 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "user deleted successfully"})
+}
+
+func (h *UserHandler) Login(c *gin.Context) {
+	var request dto.LoginRequest
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Datos inválidos",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	response, err := h.userService.Login(&request)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+func (h *UserHandler) Signup(c *gin.Context) {
+	var request dto.SignupRequest
+
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "Datos inválidos",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	response, err := h.userService.Signup(&request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, response)
 }
