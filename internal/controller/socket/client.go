@@ -12,16 +12,9 @@ import (
 )
 
 const (
-	// Tiempo permitido para escribir un mensaje
-	writeWait = 10 * time.Second
-
-	// Tiempo para leer el siguiente mensaje pong
-	pongWait = 60 * time.Second
-
-	// Enviar pings con este período
-	pingPeriod = (pongWait * 9) / 10
-
-	// Tamaño máximo del mensaje
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 512
 )
 
@@ -34,10 +27,7 @@ var (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// Permitir conexiones desde cualquier origen (ajustar según necesidades)
-		return true
-	},
+	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
 // Client es un intermediario entre la conexión websocket y el hub
@@ -50,7 +40,7 @@ type Client struct {
 	Username  string
 }
 
-// readPump bombea mensajes de la conexión websocket al hub
+// readPump (sin cambios)
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
@@ -75,35 +65,25 @@ func (c *Client) readPump() {
 
 		messageBytes = bytes.TrimSpace(bytes.Replace(messageBytes, newline, space, -1))
 
-		// Parsear el mensaje recibido
-		var incomingMessage Message
-		if err := json.Unmarshal(messageBytes, &incomingMessage); err != nil {
+		var incoming Message
+		if err := json.Unmarshal(messageBytes, &incoming); err != nil {
 			log.Printf("Error parsing message: %v", err)
 			continue
 		}
 
-		log.Printf("Received message from client %s: type=%s", c.UserID, incomingMessage.Type)
+		incoming.ProjectID = c.ProjectID
+		incoming.UserID = c.UserID
+		incoming.Username = c.Username
 
-		// Agregar información del cliente al mensaje
-		incomingMessage.ProjectID = c.ProjectID
-		incomingMessage.UserID = c.UserID
-		incomingMessage.Username = c.Username
-
-		// Obtener la sala y hacer broadcast del mensaje
-		room := c.hub.GetRoom(c.ProjectID)
-		if room != nil {
-			log.Printf("Broadcasting message to room %s", c.ProjectID)
-			// Usar el método BroadcastToRoom en lugar de acceder directamente al canal
-			if err := room.BroadcastToRoom(incomingMessage); err != nil {
+		if room := c.hub.GetRoom(c.ProjectID); room != nil {
+			if err := room.BroadcastToRoom(incoming); err != nil {
 				log.Printf("Error broadcasting message: %v", err)
 			}
-		} else {
-			log.Printf("Room not found for project: %s", c.ProjectID)
 		}
 	}
 }
 
-// writePump bombea mensajes del hub a la conexión websocket
+/* ---------- SOLUCIÓN: writePump sin concatenar JSON ---------- */
 func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -111,30 +91,35 @@ func (c *Client) writePump() {
 		c.conn.Close()
 	}()
 
+	// helper para escribir un frame
+	write := func(msg []byte) error {
+		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+		return c.conn.WriteMessage(websocket.TextMessage, msg)
+	}
+
 	for {
 		select {
-		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+		case msg, ok := <-c.send:
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// canal cerrado → cerrar WS
+				write(websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+				return
+			}
+			if err := write(msg); err != nil {
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
-
-			// Agregar mensajes en cola al mensaje actual
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write(newline)
-				w.Write(<-c.send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
+			// drenar backlog sin concatenar
+		DRAIN:
+			for {
+				select {
+				case next := <-c.send:
+					if err := write(next); err != nil {
+						return
+					}
+				default:
+					break DRAIN
+				}
 			}
 
 		case <-ticker.C:
@@ -146,39 +131,30 @@ func (c *Client) writePump() {
 	}
 }
 
-// WebSocketHandler maneja las conexiones WebSocket usando gin
+// WebSocketHandler (sin cambios)
 func WebSocketHandler(hub *Hub) gin.HandlerFunc {
-	return gin.HandlerFunc(func(c *gin.Context) {
-		// Obtener parámetros de la query string
+	return func(c *gin.Context) {
 		projectID := c.Query("project_id")
 		userID := c.Query("user_id")
 		username := c.Query("username")
 
 		if projectID == "" || userID == "" || username == "" {
-			log.Printf("Missing required parameters: project_id=%s, user_id=%s, username=%s",
-				projectID, userID, username)
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "Missing required parameters: project_id, user_id, username",
 			})
 			return
 		}
 
-		// Verificar si la sala existe y si está llena
-		room := hub.GetRoom(projectID)
-		if room != nil {
+		if room := hub.GetRoom(projectID); room != nil {
 			room.mutex.RLock()
-			clientsCount := len(room.Clients)
+			full := len(room.Clients) >= room.MaxUsers
 			room.mutex.RUnlock()
-
-			if clientsCount >= room.MaxUsers {
-				c.JSON(http.StatusForbidden, gin.H{
-					"error": "La sala está llena. Máximo 4 usuarios permitidos",
-				})
+			if full {
+				c.JSON(http.StatusForbidden, gin.H{"error": "La sala está llena. Máximo 4 usuarios"})
 				return
 			}
 		}
 
-		// Upgrade HTTP a WebSocket
 		conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 		if err != nil {
 			log.Printf("Failed to upgrade connection: %v", err)
@@ -195,9 +171,7 @@ func WebSocketHandler(hub *Hub) gin.HandlerFunc {
 		}
 
 		client.hub.register <- client
-
-		// Iniciar las goroutines para leer y escribir
 		go client.writePump()
 		go client.readPump()
-	})
+	}
 }
