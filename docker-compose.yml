@@ -4,40 +4,11 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
-    environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=gin_clean
-      - APP_PORT=8080
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "${APP_PORT}:${APP_PORT}"
+    env_file:
+      - .env
     networks:
       - gin-network
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: gin_clean
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - gin-network
-
-volumes:
-  postgres_data:
 
 networks:
   gin-network:

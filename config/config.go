@@ -8,12 +8,13 @@ import (
 )
 
 type Config struct {
-	DBHost     string
-	DBPort     string
-	DBUser     string
-	DBPassword string
-	DBName     string
-	AppPort    string
+	DatabaseURL string
+	DBHost      string
+	DBPort      string
+	DBUser      string
+	DBPassword  string
+	DBName      string
+	AppPort     string
 }
 
 func LoadConfig() (*Config, error) {
@@ -23,18 +24,22 @@ func LoadConfig() (*Config, error) {
 	}
 
 	config := &Config{
-		DBHost:     os.Getenv("DB_HOST"),
-		DBPort:     os.Getenv("DB_PORT"),
-		DBUser:     os.Getenv("DB_USER"),
-		DBPassword: os.Getenv("DB_PASSWORD"),
-		DBName:     os.Getenv("DB_NAME"),
-		AppPort:    os.Getenv("APP_PORT"),
+		DBHost:      os.Getenv("DB_HOST"),
+		DBPort:      os.Getenv("DB_PORT"),
+		DBUser:      os.Getenv("DB_USER"),
+		DBPassword:  os.Getenv("DB_PASSWORD"),
+		DBName:      os.Getenv("DB_NAME"),
+		AppPort:     os.Getenv("APP_PORT"),
+		DatabaseURL: os.Getenv("DATABASE_URL"),
 	}
 
 	return config, nil
 }
 
 func (c *Config) GetDBURL() string {
-	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
+	if c.DatabaseURL != "" {
+		return c.DatabaseURL
+	}
+	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=require",
 		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort)
 }
