@@ -15,7 +15,7 @@ const (
 	writeWait      = 10 * time.Second
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
-	maxMessageSize = 512
+	maxMessageSize = 1024 * 8
 )
 
 var (
@@ -25,8 +25,8 @@ var (
 
 // Upgrader para convertir HTTP a WebSocket
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
+	ReadBufferSize:  1024 * 4,
+	WriteBufferSize: 1024 * 4,
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
@@ -164,7 +164,7 @@ func WebSocketHandler(hub *Hub) gin.HandlerFunc {
 		client := &Client{
 			hub:       hub,
 			conn:      conn,
-			send:      make(chan []byte, 256),
+			send:      make(chan []byte, 512),
 			ProjectID: projectID,
 			UserID:    userID,
 			Username:  username,
