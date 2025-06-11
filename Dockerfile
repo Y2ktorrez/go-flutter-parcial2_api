@@ -14,7 +14,6 @@ FROM alpine:3.19
 WORKDIR /app
 
 COPY --from=builder /app/go-flutter-parcial2_api .
-COPY .env .
 
 EXPOSE 8080
 
